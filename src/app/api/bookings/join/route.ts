@@ -1,23 +1,30 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
-
-type Role = "creator" | "customer";
+import { resolveRoleFromToken } from "@/lib/call-tokens";
 
 interface JoinRequestBody {
   booking_id: string;
-  role: Role;
+  token: string;
 }
 
 export async function POST(request: NextRequest) {
   try {
     const body = (await request.json()) as Partial<JoinRequestBody>;
-    const { booking_id, role } = body;
+    const { booking_id, token } = body;
 
-    if (!booking_id || (role !== "creator" && role !== "customer")) {
+    if (!booking_id || !token) {
       return NextResponse.json(
-        { error: "booking_id et role ('creator' ou 'customer') sont requis." },
+        { error: "booking_id et token sont requis." },
         { status: 400 },
       );
+    }
+
+    // The role is derived from the token, never trusted from the client —
+    // otherwise anyone who knows a booking_id could claim either role and
+    // record a fake join timestamp for it.
+    const role = resolveRoleFromToken(booking_id, token);
+    if (!role) {
+      return NextResponse.json({ error: "Lien invalide." }, { status: 403 });
     }
 
     const { data: booking, error: fetchError } = await supabase

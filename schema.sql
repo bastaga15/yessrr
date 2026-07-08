@@ -14,6 +14,9 @@ create table creators (
   slug               text not null unique,
   hourly_rate_cents  integer not null default 0,
   stripe_connect_id  text unique,
+  -- last time we emailed this creator to finish Stripe Connect onboarding
+  -- because money was sitting unpaid on the platform balance for them
+  stripe_connect_reminder_sent_at timestamptz,
   -- secret link (no creator login system yet) used to access /manage/<token>
   management_token   text not null unique default encode(gen_random_bytes(24), 'hex'),
   created_at         timestamptz not null default now()

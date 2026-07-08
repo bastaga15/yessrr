@@ -4,12 +4,12 @@ import { useState } from "react";
 
 export function CallGate({
   bookingId,
-  role,
+  token,
   videoRoomUrl,
   formattedSlot,
 }: {
   bookingId: string;
-  role: "creator" | "customer";
+  token: string;
   videoRoomUrl: string;
   formattedSlot: string;
 }) {
@@ -24,7 +24,7 @@ export function CallGate({
       const response = await fetch("/api/bookings/join", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ booking_id: bookingId, role }),
+        body: JSON.stringify({ booking_id: bookingId, token }),
       });
 
       const data = await response.json();

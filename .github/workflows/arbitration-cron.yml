@@ -34,3 +34,16 @@ jobs:
             echo "Request failed with status $status_code"
             exit 1
           fi
+
+      - name: Call /api/cron/stripe-connect-reminders
+        run: |
+          response=$(curl -s -w "\n%{http_code}" -X POST \
+            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
+            https://yessrr.fr/api/cron/stripe-connect-reminders)
+          status_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | sed '$d')
+          echo "$body"
+          if [ "$status_code" -ge 400 ]; then
+            echo "Request failed with status $status_code"
+            exit 1
+          fi

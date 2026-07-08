@@ -1,4 +1,5 @@
 import { Resend } from "resend";
+import { generateCallToken } from "@/lib/call-tokens";
 
 const resendApiKey = process.env.RESEND_API_KEY;
 if (!resendApiKey) {
@@ -26,8 +27,12 @@ function formatSlot(slotTime: string): string {
   return new Date(slotTime).toLocaleString("fr-FR", { dateStyle: "long", timeStyle: "short" });
 }
 
+// Uses a signed per-role token rather than a bare ?role= string — otherwise
+// the customer's and creator's emails for the same booking would differ
+// only by that string, and either party could edit their own link to claim
+// the other's role and record a fake join timestamp for them.
 function callUrl(bookingId: string, role: "customer" | "creator"): string {
-  return `${APP_URL}/call/${bookingId}?role=${role}`;
+  return `${APP_URL}/call/${bookingId}?token=${generateCallToken(bookingId, role)}`;
 }
 
 /** Delivery failures are logged, never thrown — a Resend hiccup must never undo a booking outcome that's already been decided. */
@@ -160,6 +165,39 @@ export async function sendReviewRequestEmail(input: BookingEmailContext): Promis
       html: renderEmail({
         greeting: `Salut ${input.customerName},`,
         bodyHtml: `<p>Ton appel avec <strong>${input.creatorName}</strong> est terminé — on espère que ça s'est bien passé ! Réponds directement à cet email pour nous dire comment ça s'est passé, ton avis nous aide à améliorer Yessrr.</p>`,
+      }),
+    },
+  ]);
+}
+
+/**
+ * Nudges a creator who has money sitting on the platform balance because
+ * they never finished Stripe Connect onboarding — see
+ * src/lib/payouts.ts#releasePendingPayouts and /api/cron/stripe-connect-reminders,
+ * which throttles how often this actually gets sent per creator.
+ */
+export async function sendStripeConnectReminderEmail(input: {
+  creatorEmail: string;
+  creatorName: string;
+  managementToken: string;
+  pendingAmountCents: number;
+  pendingBookingsCount: number;
+}): Promise<void> {
+  const amount = (input.pendingAmountCents / 100).toLocaleString("fr-FR", {
+    style: "currency",
+    currency: "EUR",
+  });
+  const bookingsLabel =
+    input.pendingBookingsCount === 1 ? "1 réservation" : `${input.pendingBookingsCount} réservations`;
+
+  await sendEmails([
+    {
+      to: input.creatorEmail,
+      subject: `${amount} t'attendent sur Yessrr`,
+      html: renderEmail({
+        greeting: `Salut ${input.creatorName},`,
+        bodyHtml: `<p>Tu as ${bookingsLabel} payée${input.pendingBookingsCount > 1 ? "s" : ""} sur Yessrr pour un total de <strong>${amount}</strong>, mais cet argent reste bloqué tant que tu n'as pas terminé la configuration de ton compte Stripe. Ça prend deux minutes.</p>`,
+        cta: { label: "Configurer mon compte Stripe", url: `${APP_URL}/manage/${input.managementToken}` },
       }),
     },
   ]);

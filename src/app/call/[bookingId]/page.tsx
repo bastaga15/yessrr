@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { SLOT_DURATION_MINUTES } from "@/lib/availability";
+import { resolveRoleFromToken } from "@/lib/call-tokens";
 import { CallGate } from "./call-gate";
 
 const EARLY_ACCESS_MINUTES = 15;
@@ -22,10 +23,10 @@ export default async function CallPage({
   searchParams,
 }: {
   params: { bookingId: string };
-  searchParams: { role?: string };
+  searchParams: { token?: string };
 }) {
-  const role = searchParams.role;
-  if (role !== "creator" && role !== "customer") {
+  const role = resolveRoleFromToken(params.bookingId, searchParams.token);
+  if (!role) {
     notFound();
   }
 
@@ -77,7 +78,7 @@ export default async function CallPage({
   return (
     <CallGate
       bookingId={booking.id}
-      role={role}
+      token={searchParams.token!}
       videoRoomUrl={booking.video_room_url}
       formattedSlot={formattedSlot}
     />

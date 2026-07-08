@@ -58,6 +58,21 @@ la demande vite avec du vrai monde, pas peaufiner la stack.
   ou paiement), demande d'avis après un `completed`. Layout léger commun (logo +
   accent indigo), pas de réplication de la DA complète du site — décision
   volontaire, voir plus bas. Tous les envois testés sans erreur de livraison.
+- **Jetons de rôle signés pour `/call/<bookingId>`** : le rôle (créateur/client) n'est
+  plus un `?role=` en clair dans l'URL (les deux emails d'un même booking ne
+  différaient que par cette chaîne, éditable par n'importe qui) mais un token HMAC
+  (`CALL_TOKEN_SECRET`) dérivé du booking + rôle, revalidé à la fois par la page et
+  par `/api/bookings/join`. Ferme l'usurpation de rôle qui permettait de faire
+  enregistrer un faux `creator_joined_at`/`customer_joined_at`. Testé : token valide
+  accepté, token falsifié/absent rejeté (page 404, API 403), ancien format `role`
+  seul explicitement refusé.
+- **Relance email des créateurs jamais connectés à Stripe** : `/api/cron/stripe-connect-reminders`
+  (même cron GitHub Actions) détecte les créateurs avec un paiement `completed`/
+  `no_show_client` jamais transféré (`stripe_transfer_id` null) parce qu'ils n'ont
+  pas fini l'onboarding Stripe, et leur envoie un rappel avec le montant en attente
+  — throttlé à un envoi tous les 3 jours par créateur (`stripe_connect_reminder_sent_at`).
+  Testé : premier passage envoie, second passage immédiat est bien ignoré (throttle),
+  secret cron invalide rejeté.
 - RLS activée sur toutes les tables (default-deny, service-role bypass).
 - Déploiement : `yessrr.fr` + `www.yessrr.fr` en prod sur Vercel, connecté à GitHub
   (`github.com/bastaga15/yessrr`, privé) — push sur `main` = déploiement auto.
@@ -91,13 +106,15 @@ Les points 1 et 2 sont faits (voir ci-dessus). Prochain dans l'ordre :
 4. ~~Disponibilités par date précise~~ ✅ fait (calendrier mensuel d'exceptions).
 5. **Vraie page d'onboarding** — polish/contenu à revoir, prévu explicitement comme
    dernière étape avant un vrai passage en prod (pas urgent).
-6. **Durcir l'arbitrage contre la fraude** — rien n'empêche aujourd'hui un client
-   malhonnête de "rejoindre" l'appel puis couper immédiatement pour faire déclencher
-   un no-show créateur. Signalé comme risque produit réel, pas encore traité.
-7. **Relance des créateurs jamais connectés à Stripe** — avec l'onboarding différé,
-   un créateur qui ne connecte jamais son compte laisse de l'argent dormir
-   indéfiniment sur le solde plateforme. Pas de mécanisme de relance dédié (les
-   séquences email existantes ne couvrent pas ce cas précis).
+6. ~~Durcir l'arbitrage contre la fraude~~ ✅ fait pour la partie usurpation de rôle
+   (token HMAC par rôle sur `/call/<bookingId>`, voir ci-dessus). Décision prise de
+   ne pas aller plus loin pour l'instant (pas de heartbeat/iframe Jitsi pour détecter
+   un "rejoindre puis couper immédiatement") — ça demanderait de réécrire
+   l'intégration vidéo (iframe + JS API au lieu d'une redirection vers meet.jit.si)
+   pour un risque encore théorique. Reconsidérable si ça devient un vrai problème
+   en usage réel.
+7. ~~Relance des créateurs jamais connectés à Stripe~~ ✅ fait (email throttlé à
+   3 jours, voir ci-dessus).
 
 ## Décisions notables (pour ne pas les rediscuter)
 
