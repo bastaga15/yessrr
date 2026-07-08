@@ -73,6 +73,17 @@ la demande vite avec du vrai monde, pas peaufiner la stack.
   — throttlé à un envoi tous les 3 jours par créateur (`stripe_connect_reminder_sent_at`).
   Testé : premier passage envoie, second passage immédiat est bien ignoré (throttle),
   secret cron invalide rejeté.
+- **Nettoyage des checkouts abandonnés** : `/api/cron/expire-pending-bookings` (même
+  cron) supprime tout booking `pending` vieux de plus de 10 minutes et expire la
+  session Stripe correspondante — sans ça, un client qui ferme l'onglet sans payer
+  bloquait le créneau indéfiniment (aucun mécanisme ne faisait jamais sortir ce
+  booking de `pending`). Le delete est conditionné sur `status = 'pending'` pour ne
+  pas écraser une confirmation qui arriverait en même temps (course avec le webhook
+  Stripe). Testé avec une vraie session Stripe : abandon détecté et nettoyé après
+  10 min, session bien marquée `expired` côté Stripe, un booking récent (dans la
+  fenêtre des 10 min) n'est pas touché. Au passage, ce premier run a aussi nettoyé
+  deux bookings `pending` abandonnés qui traînaient déjà en base depuis des tests
+  précédents.
 - RLS activée sur toutes les tables (default-deny, service-role bypass).
 - Déploiement : `yessrr.fr` + `www.yessrr.fr` en prod sur Vercel, connecté à GitHub
   (`github.com/bastaga15/yessrr`, privé) — push sur `main` = déploiement auto.
