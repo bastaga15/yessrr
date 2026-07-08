@@ -1,3 +1,4 @@
+import { randomBytes } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 
@@ -64,6 +65,11 @@ export async function POST(request: NextRequest) {
         email,
         slug,
         hourly_rate_cents: Math.round(hourlyRateNumber * 100),
+        // Generated here rather than relying on the column's DB default —
+        // the live table doesn't actually have one (only schema.sql's
+        // fresh-install CREATE TABLE does; the incremental migration that
+        // added this column to the live DB never set a DEFAULT).
+        management_token: randomBytes(24).toString("hex"),
       })
       .select("id, slug, management_token")
       .single();
