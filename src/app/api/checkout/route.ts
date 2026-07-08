@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 import { supabase } from "@/lib/supabase";
 import { isSlotWithinRules } from "@/lib/availability";
+import { getConnectStatus } from "@/lib/stripe-connect";
+
+const PLATFORM_COMMISSION_RATE = 0.1; // Yessrr keeps 10%, the rest is transferred to the creator
 
 interface CheckoutRequestBody {
   creator_slug: string;
@@ -32,7 +35,7 @@ export async function POST(request: NextRequest) {
 
     const { data: creator, error: creatorError } = await supabase
       .from("creators")
-      .select("id, name, hourly_rate_cents")
+      .select("id, name, hourly_rate_cents, stripe_connect_id")
       .eq("slug", creator_slug)
       .maybeSingle();
 
@@ -43,6 +46,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { error: `Créateur introuvable pour "${creator_slug}".` },
         { status: 404 },
+      );
+    }
+
+    const connectStatus = await getConnectStatus(creator.stripe_connect_id);
+    if (!connectStatus.payoutsEnabled) {
+      return NextResponse.json(
+        { error: "Ce créateur n'a pas encore terminé la configuration de ses paiements." },
+        { status: 400 },
       );
     }
 
@@ -100,6 +111,13 @@ export async function POST(request: NextRequest) {
             quantity: 1,
           },
         ],
+        payment_intent_data: {
+          application_fee_amount: Math.round(creator.hourly_rate_cents * PLATFORM_COMMISSION_RATE),
+          transfer_data: {
+            // Non-null: guarded by the payoutsEnabled check above.
+            destination: creator.stripe_connect_id as string,
+          },
+        },
         metadata: {
           booking_id: booking.id,
           customer_name,

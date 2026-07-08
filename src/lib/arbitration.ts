@@ -149,6 +149,12 @@ async function refundBooking(
 
   const refund = await stripe.refunds.create({
     payment_intent: paymentIntentId,
+    // The charge is a destination charge — funds already moved to the
+    // creator's connected account, and our commission was collected as an
+    // application fee. Both must be pulled back explicitly, or a "no-show
+    // creator" refund would leave the creator keeping the money anyway.
+    reverse_transfer: true,
+    refund_application_fee: true,
     metadata: { booking_id: bookingId, reason: "creator_no_show" },
   });
 
