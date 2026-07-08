@@ -25,7 +25,12 @@ la demande vite avec du vrai monde, pas peaufiner la stack.
 ## Ce qui marche aujourd'hui (testé bout en bout)
 
 - Onboarding créateur (`/onboarding`) → génère un slug + `management_token`.
-- Édition du planning hebdomadaire (`/manage/<token>`).
+- Édition du planning hebdomadaire (`/manage/<token>`) + **calendrier mensuel
+  d'exceptions par date** (rendre une date dispo avec des horaires personnalisés,
+  ou la bloquer) — les deux cohabitent, l'exception gagne toujours sur le
+  récurrent pour sa date. Fenêtre de réservation étendue à 30 jours. Testé :
+  ajout d'une dispo un jour normalement fermé, blocage d'un jour normalement
+  ouvert, retour au récurrent, aucun impact sur les réservations existantes.
 - Réservation avec vrais créneaux calculés depuis le planning (`/[slug]`).
 - Checkout Stripe avec le tarif réel du créateur.
 - Webhook Stripe → confirmation + génération salle Jitsi + emails (client + créateur).
@@ -83,10 +88,7 @@ Les points 1 et 2 sont faits (voir ci-dessus). Prochain dans l'ordre :
 1. ~~Configurer un scheduler externe réel~~ ✅ fait (GitHub Actions).
 2. ~~Stripe Connect~~ ✅ fait, avec onboarding différé en plus de ce qui était prévu.
 3. ~~Séquences email~~ ✅ fait (rappels, no-show, demande d'avis).
-4. **Système de disponibilités par date précise** — le planning actuel n'est que
-   récurrent (jour de la semaine). Il faut pouvoir ajouter/bloquer une date précise
-   (ex. "14 juillet dispo toute la journée"). Prochain chantier, jugé plus simple à
-   construire nous-mêmes qu'à migrer vers Cal.com (voir décisions ci-dessous).
+4. ~~Disponibilités par date précise~~ ✅ fait (calendrier mensuel d'exceptions).
 5. **Vraie page d'onboarding** — polish/contenu à revoir, prévu explicitement comme
    dernière étape avant un vrai passage en prod (pas urgent).
 6. **Durcir l'arbitrage contre la fraude** — rien n'empêche aujourd'hui un client
