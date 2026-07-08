@@ -2,6 +2,12 @@ import Stripe from "stripe";
 import { supabase } from "@/lib/supabase";
 import { getConnectStatus } from "@/lib/stripe-connect";
 import { payoutBooking } from "@/lib/payouts";
+import {
+  sendNoShowCreatorEmails,
+  sendNoShowClientEmails,
+  sendReviewRequestEmail,
+  type BookingEmailContext,
+} from "@/lib/email";
 
 /**
  * Grace periods for the arbitration protocol. A party is only considered a
@@ -43,7 +49,7 @@ export async function arbitrateBooking(bookingId: string): Promise<ArbitrationRe
   const { data: booking, error: fetchError } = await supabase
     .from("bookings")
     .select(
-      "id, creator_id, status, slot_time, stripe_payment_id, amount_cents, creator_joined_at, customer_joined_at",
+      "id, creator_id, status, slot_time, stripe_payment_id, amount_cents, customer_email, customer_name, creator_joined_at, customer_joined_at",
     )
     .eq("id", bookingId)
     .single();
@@ -98,9 +104,26 @@ export async function arbitrateBooking(bookingId: string): Promise<ArbitrationRe
     throw updateError;
   }
 
+  const { data: creator } = await supabase
+    .from("creators")
+    .select("name, email, stripe_connect_id")
+    .eq("id", booking.creator_id)
+    .single();
+
   let transferId: string | null = null;
-  if (status === "no_show_client" || status === "completed") {
-    transferId = await tryPayoutBooking(booking);
+  if (creator && (status === "no_show_client" || status === "completed")) {
+    transferId = await tryPayoutBooking(booking, creator.stripe_connect_id);
+  }
+
+  if (creator) {
+    await notifyOutcome(status, {
+      bookingId: booking.id,
+      customerEmail: booking.customer_email,
+      customerName: booking.customer_name,
+      creatorEmail: creator.email,
+      creatorName: creator.name,
+      slotTime: booking.slot_time,
+    });
   }
 
   return {
@@ -111,6 +134,26 @@ export async function arbitrateBooking(bookingId: string): Promise<ArbitrationRe
     creatorLatenessMinutes,
     customerLatenessMinutes,
   };
+}
+
+/**
+ * Emails both parties the outcome. Best-effort — sendXEmails() already
+ * swallows its own delivery failures, but a thrown error here (e.g. a bug in
+ * template rendering) must not undo the arbitration decision, which has
+ * already been persisted by this point.
+ */
+async function notifyOutcome(status: ArbitratedStatus, context: BookingEmailContext): Promise<void> {
+  try {
+    if (status === "no_show_creator") {
+      await sendNoShowCreatorEmails(context);
+    } else if (status === "no_show_client") {
+      await sendNoShowClientEmails(context);
+    } else {
+      await sendReviewRequestEmail(context);
+    }
+  } catch (error) {
+    console.error(`[arbitration] booking ${context.bookingId}: échec de la notification email`, error);
+  }
 }
 
 /**
@@ -129,27 +172,31 @@ function minutesLate(slotTime: Date, joinedAt: Date | null): number | null {
  * a null stripe_transfer_id: the money stays on the platform balance until
  * they finish connecting, at which point releasePendingPayouts sweeps it up.
  */
-async function tryPayoutBooking(booking: {
-  id: string;
-  creator_id: string;
-  amount_cents: number | null;
-}): Promise<string | null> {
-  const { data: creator, error } = await supabase
-    .from("creators")
-    .select("stripe_connect_id")
-    .eq("id", booking.creator_id)
-    .single();
-
-  if (error || !creator?.stripe_connect_id) {
+async function tryPayoutBooking(
+  booking: { id: string; amount_cents: number | null },
+  stripeConnectId: string | null,
+): Promise<string | null> {
+  if (!stripeConnectId) {
     return null;
   }
 
-  const connectStatus = await getConnectStatus(creator.stripe_connect_id);
-  if (!connectStatus.payoutsEnabled) {
+  try {
+    const connectStatus = await getConnectStatus(stripeConnectId);
+    if (!connectStatus.payoutsEnabled) {
+      return null;
+    }
+
+    return await payoutBooking(booking, stripeConnectId);
+  } catch (error) {
+    // A transfer failure (insufficient platform balance, a transient Stripe
+    // API hiccup, ...) must not crash arbitration — the status decision has
+    // already been persisted by the time we get here, and it's correct
+    // regardless of whether the payout succeeded. Leave stripe_transfer_id
+    // null; releasePendingPayouts will retry it the next time the creator's
+    // /manage/<token> page loads.
+    console.error(`[arbitration] booking ${booking.id}: échec du transfert`, error);
     return null;
   }
-
-  return payoutBooking(booking, creator.stripe_connect_id);
 }
 
 /**

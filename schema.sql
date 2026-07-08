@@ -64,6 +64,8 @@ create table bookings (
   stripe_transfer_id  text, -- null until the creator's 90% share has been transferred (see src/lib/payouts.ts)
   creator_joined_at   timestamptz,
   customer_joined_at  timestamptz,
+  reminder_24h_sent_at timestamptz,
+  reminder_1h_sent_at  timestamptz,
   created_at          timestamptz not null default now(),
 
   -- empêche le double-booking d'un même créneau chez un créateur
