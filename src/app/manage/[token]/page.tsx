@@ -3,6 +3,7 @@ import { supabase } from "@/lib/supabase";
 import { getConnectStatus } from "@/lib/stripe-connect";
 import { releasePendingPayouts } from "@/lib/payouts";
 import { AvailabilityEditor } from "./availability-editor";
+import { AvailabilityCalendar } from "./availability-calendar";
 import { PaymentsSection } from "./payments-section";
 
 // Must always reflect the latest saved state — never let Next.js cache the
@@ -27,6 +28,11 @@ export default async function ManageAvailabilityPage({
   const { data: rules } = await supabase
     .from("weekly_availability_rules")
     .select("day_of_week, start_time, end_time")
+    .eq("creator_id", creator.id);
+
+  const { data: overrides } = await supabase
+    .from("availability_overrides")
+    .select("date, is_available, start_time, end_time")
     .eq("creator_id", creator.id);
 
   const connectStatus = await getConnectStatus(creator.stripe_connect_id);
@@ -72,6 +78,12 @@ export default async function ManageAvailabilityPage({
         <AvailabilityEditor
           managementToken={params.token}
           initialRules={rules ?? []}
+        />
+
+        <AvailabilityCalendar
+          managementToken={params.token}
+          initialRules={rules ?? []}
+          initialOverrides={overrides ?? []}
         />
 
         <a

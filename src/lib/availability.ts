@@ -3,12 +3,19 @@ import { supabase } from "@/lib/supabase";
 
 const TIMEZONE = "Europe/Paris";
 export const SLOT_DURATION_MINUTES = 60;
-const BOOKING_WINDOW_DAYS = 14;
+const BOOKING_WINDOW_DAYS = 30;
 
 export interface WeeklyRule {
   day_of_week: number; // 0 = Sunday .. 6 = Saturday
   start_time: string; // "HH:MM:SS" (Postgres `time`)
   end_time: string;
+}
+
+export interface AvailabilityOverride {
+  date: string; // "yyyy-MM-dd"
+  is_available: boolean;
+  start_time: string | null; // "HH:MM:SS", set only when is_available
+  end_time: string | null;
 }
 
 export interface AvailableSlot {
@@ -21,6 +28,16 @@ export async function getWeeklyRules(creatorId: string): Promise<WeeklyRule[]> {
   const { data, error } = await supabase
     .from("weekly_availability_rules")
     .select("day_of_week, start_time, end_time")
+    .eq("creator_id", creatorId);
+
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function getAvailabilityOverrides(creatorId: string): Promise<AvailabilityOverride[]> {
+  const { data, error } = await supabase
+    .from("availability_overrides")
+    .select("date, is_available, start_time, end_time")
     .eq("creator_id", creatorId);
 
   if (error) throw error;
@@ -40,17 +57,47 @@ function formatDateOnly(date: Date): string {
 }
 
 /**
- * All bookable slots for the next two weeks, derived live from the
- * creator's weekly rules with already-booked slots removed. Nothing is ever
- * persisted here — editing the rules later can't corrupt or unbook anything,
- * since bookings live in a completely separate table.
+ * Resolves the effective window (if any) for a specific date, applying the
+ * "override wins entirely" rule: a date-specific override — whether a
+ * custom window or a full block — always takes precedence over the
+ * recurring weekly rule, which is only consulted when no override exists.
+ */
+function resolveWindowForDate(
+  dayOfWeek: number,
+  dateStr: string,
+  rulesByDay: Map<number, WeeklyRule>,
+  overridesByDate: Map<string, AvailabilityOverride>,
+): { start_time: string; end_time: string } | null {
+  const override = overridesByDate.get(dateStr);
+  if (override) {
+    if (!override.is_available) return null;
+    return { start_time: override.start_time!, end_time: override.end_time! };
+  }
+
+  const rule = rulesByDay.get(dayOfWeek);
+  return rule ? { start_time: rule.start_time, end_time: rule.end_time } : null;
+}
+
+/**
+ * All bookable slots for the next month, derived live from the creator's
+ * weekly rules (plus any date-specific overrides) with already-booked slots
+ * removed. Nothing is ever persisted here — editing the schedule later can't
+ * corrupt or unbook anything, since bookings live in a completely separate
+ * table.
  */
 export async function generateAvailableSlots(creatorId: string): Promise<AvailableSlot[]> {
-  const rules = await getWeeklyRules(creatorId);
-  if (rules.length === 0) return [];
+  const [rules, overrides] = await Promise.all([
+    getWeeklyRules(creatorId),
+    getAvailabilityOverrides(creatorId),
+  ]);
 
   const rulesByDay = new Map<number, WeeklyRule>();
   for (const rule of rules) rulesByDay.set(rule.day_of_week, rule);
+
+  const overridesByDate = new Map<string, AvailabilityOverride>();
+  for (const override of overrides) overridesByDate.set(override.date, override);
+
+  if (rulesByDay.size === 0 && overridesByDate.size === 0) return [];
 
   const now = new Date();
   const candidates: AvailableSlot[] = [];
@@ -59,12 +106,12 @@ export async function generateAvailableSlots(creatorId: string): Promise<Availab
     const localDay = toZonedTime(now, TIMEZONE);
     localDay.setDate(localDay.getDate() + dayOffset);
 
-    const rule = rulesByDay.get(localDay.getDay());
-    if (!rule) continue;
-
     const dateStr = formatDateOnly(localDay);
-    const startTotalMinutes = timeToMinutes(rule.start_time);
-    const endTotalMinutes = timeToMinutes(rule.end_time);
+    const window = resolveWindowForDate(localDay.getDay(), dateStr, rulesByDay, overridesByDate);
+    if (!window) continue;
+
+    const startTotalMinutes = timeToMinutes(window.start_time);
+    const endTotalMinutes = timeToMinutes(window.end_time);
 
     for (
       let minutes = startTotalMinutes;
@@ -102,8 +149,8 @@ export async function generateAvailableSlots(creatorId: string): Promise<Availab
 /**
  * Server-side defense in depth for /api/checkout: never trust a slot_time
  * sent by the client without checking it actually falls inside one of the
- * creator's declared availability windows, on the correct 60-minute grid,
- * and isn't in the past.
+ * creator's declared availability windows (recurring rule or override), on
+ * the correct 60-minute grid, and isn't in the past.
  */
 export async function isSlotWithinRules(creatorId: string, isoSlotTime: string): Promise<boolean> {
   const slotDate = new Date(isoSlotTime);
@@ -111,14 +158,26 @@ export async function isSlotWithinRules(creatorId: string, isoSlotTime: string):
     return false;
   }
 
-  const rules = await getWeeklyRules(creatorId);
   const zoned = toZonedTime(slotDate, TIMEZONE);
-  const rule = rules.find((r) => r.day_of_week === zoned.getDay());
-  if (!rule) return false;
+  const dateStr = formatDateOnly(zoned);
+
+  const [rules, overrides] = await Promise.all([
+    getWeeklyRules(creatorId),
+    getAvailabilityOverrides(creatorId),
+  ]);
+
+  const rulesByDay = new Map<number, WeeklyRule>();
+  for (const rule of rules) rulesByDay.set(rule.day_of_week, rule);
+
+  const overridesByDate = new Map<string, AvailabilityOverride>();
+  for (const override of overrides) overridesByDate.set(override.date, override);
+
+  const window = resolveWindowForDate(zoned.getDay(), dateStr, rulesByDay, overridesByDate);
+  if (!window) return false;
 
   const slotMinutes = zoned.getHours() * 60 + zoned.getMinutes();
-  const startTotalMinutes = timeToMinutes(rule.start_time);
-  const endTotalMinutes = timeToMinutes(rule.end_time);
+  const startTotalMinutes = timeToMinutes(window.start_time);
+  const endTotalMinutes = timeToMinutes(window.end_time);
 
   const isOnGrid = (slotMinutes - startTotalMinutes) % SLOT_DURATION_MINUTES === 0;
 
