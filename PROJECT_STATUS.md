@@ -48,6 +48,11 @@ la demande vite avec du vrai monde, pas peaufiner la stack.
   - Testé de bout en bout avec un vrai compte connecté Stripe : split 90/10 réel,
     remboursement réel, déblocage différé réel (transfert de 4500/5000 centimes
     confirmé).
+- **Séquences email complètes** : confirmation, rappels J-1 et H-1 (cron dédié,
+  fenêtres non chevauchantes), notification no-show créateur/client (remboursement
+  ou paiement), demande d'avis après un `completed`. Layout léger commun (logo +
+  accent indigo), pas de réplication de la DA complète du site — décision
+  volontaire, voir plus bas. Tous les envois testés sans erreur de livraison.
 - RLS activée sur toutes les tables (default-deny, service-role bypass).
 - Déploiement : `yessrr.fr` + `www.yessrr.fr` en prod sur Vercel, connecté à GitHub
   (`github.com/bastaga15/yessrr`, privé) — push sur `main` = déploiement auto.
@@ -77,18 +82,20 @@ Les points 1 et 2 sont faits (voir ci-dessus). Prochain dans l'ordre :
 
 1. ~~Configurer un scheduler externe réel~~ ✅ fait (GitHub Actions).
 2. ~~Stripe Connect~~ ✅ fait, avec onboarding différé en plus de ce qui était prévu.
-3. **Séquences email** — aujourd'hui seul l'email de confirmation existe. À ajouter :
-   rappel J-1 ET H-1 avant l'appel, notification distincte no-show/remboursement
-   (actuellement le no-show ne déclenche aucun email), demande d'avis après l'appel.
-4. **Vraie page d'onboarding** — polish/contenu à revoir, prévu explicitement comme
+3. ~~Séquences email~~ ✅ fait (rappels, no-show, demande d'avis).
+4. **Système de disponibilités par date précise** — le planning actuel n'est que
+   récurrent (jour de la semaine). Il faut pouvoir ajouter/bloquer une date précise
+   (ex. "14 juillet dispo toute la journée"). Prochain chantier, jugé plus simple à
+   construire nous-mêmes qu'à migrer vers Cal.com (voir décisions ci-dessous).
+5. **Vraie page d'onboarding** — polish/contenu à revoir, prévu explicitement comme
    dernière étape avant un vrai passage en prod (pas urgent).
-5. **Durcir l'arbitrage contre la fraude** — rien n'empêche aujourd'hui un client
+6. **Durcir l'arbitrage contre la fraude** — rien n'empêche aujourd'hui un client
    malhonnête de "rejoindre" l'appel puis couper immédiatement pour faire déclencher
    un no-show créateur. Signalé comme risque produit réel, pas encore traité.
-6. **Relance des créateurs jamais connectés à Stripe** — avec l'onboarding différé,
+7. **Relance des créateurs jamais connectés à Stripe** — avec l'onboarding différé,
    un créateur qui ne connecte jamais son compte laisse de l'argent dormir
-   indéfiniment sur le solde plateforme. Pas de mécanisme de relance/notification
-   pour l'instant (lié au chantier "séquences email" ci-dessus).
+   indéfiniment sur le solde plateforme. Pas de mécanisme de relance dédié (les
+   séquences email existantes ne couvrent pas ce cas précis).
 
 ## Décisions notables (pour ne pas les rediscuter)
 
@@ -101,7 +108,14 @@ Les points 1 et 2 sont faits (voir ci-dessus). Prochain dans l'ordre :
   être recodé par-dessus leur système de paiement, en dépendant de leur modèle
   interne plutôt que de le posséder de bout en bout. Reconsidérable si besoin de
   vitesse extrême ou de fonctionnalités calendrier qu'on n'a pas (sync Google
-  Calendar, multi-fuseaux avancé).
+  Calendar, multi-fuseaux avancé). Reconfirmé une deuxième fois (question du
+  planning par date précise) : encore moins pertinent maintenant que Connect +
+  arbitrage + cron sont branchés et testés sur notre propre modèle de données —
+  migrer voudrait dire rejeter tout ce travail pour un sélecteur de calendrier.
+- **Emails en DA légère, pas la DA complète du site** : logo + un accent indigo,
+  pas les dégradés/effets de flou de l'app web — la plupart des clients mail les
+  cassent de toute façon (Gmail, Outlook). Décision consciente pour aller vite ;
+  à revoir si l'identité de marque devient un sujet.
 - **Système de disponibilités maison plutôt qu'un outil externe** : besoin jugé
   trop étroit (récurrence hebdo + ne jamais toucher un créneau réservé) pour
   justifier une dépendance lourde.
