@@ -85,6 +85,7 @@ export async function POST(request: NextRequest) {
       booking_id: result.bookingId,
       status: result.status,
       refund_id: result.refundId,
+      transfer_id: result.transferId,
       creator_lateness_minutes: result.creatorLatenessMinutes,
       customer_lateness_minutes: result.customerLatenessMinutes,
     });

@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { getConnectStatus } from "@/lib/stripe-connect";
+import { releasePendingPayouts } from "@/lib/payouts";
 import { AvailabilityEditor } from "./availability-editor";
 import { PaymentsSection } from "./payments-section";
 
@@ -30,6 +31,15 @@ export default async function ManageAvailabilityPage({
 
   const connectStatus = await getConnectStatus(creator.stripe_connect_id);
 
+  // The moment we see the creator is Connect-ready (typically their first
+  // load of this page after finishing Stripe onboarding), sweep for any
+  // booking that was decided in their favor while they were still pending —
+  // that money has been sitting on the platform balance until now.
+  let releasedCount = 0;
+  if (connectStatus.payoutsEnabled && creator.stripe_connect_id) {
+    releasedCount = await releasePendingPayouts(creator.id, creator.stripe_connect_id);
+  }
+
   return (
     <div className="relative min-h-screen overflow-hidden">
       <div className="pointer-events-none absolute -top-40 left-1/2 h-[32rem] w-[32rem] -translate-x-1/2 rounded-full bg-gradient-to-br from-indigo-600/30 to-violet-600/20 blur-3xl" />
@@ -53,7 +63,11 @@ export default async function ManageAvailabilityPage({
           </p>
         </div>
 
-        <PaymentsSection managementToken={params.token} status={connectStatus} />
+        <PaymentsSection
+          managementToken={params.token}
+          status={connectStatus}
+          releasedCount={releasedCount}
+        />
 
         <AvailabilityEditor
           managementToken={params.token}

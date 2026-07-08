@@ -1,5 +1,7 @@
 import Stripe from "stripe";
 import { supabase } from "@/lib/supabase";
+import { getConnectStatus } from "@/lib/stripe-connect";
+import { payoutBooking } from "@/lib/payouts";
 
 /**
  * Grace periods for the arbitration protocol. A party is only considered a
@@ -25,6 +27,7 @@ export interface ArbitrationResult {
   bookingId: string;
   status: ArbitratedStatus | "already_arbitrated";
   refundId: string | null;
+  transferId: string | null;
   creatorLatenessMinutes: number | null;
   customerLatenessMinutes: number | null;
 }
@@ -39,7 +42,9 @@ export interface ArbitrationResult {
 export async function arbitrateBooking(bookingId: string): Promise<ArbitrationResult> {
   const { data: booking, error: fetchError } = await supabase
     .from("bookings")
-    .select("id, status, slot_time, stripe_payment_id, creator_joined_at, customer_joined_at")
+    .select(
+      "id, creator_id, status, slot_time, stripe_payment_id, amount_cents, creator_joined_at, customer_joined_at",
+    )
     .eq("id", bookingId)
     .single();
 
@@ -52,6 +57,7 @@ export async function arbitrateBooking(bookingId: string): Promise<ArbitrationRe
       bookingId: booking.id,
       status: "already_arbitrated",
       refundId: null,
+      transferId: null,
       creatorLatenessMinutes: null,
       customerLatenessMinutes: null,
     };
@@ -92,10 +98,16 @@ export async function arbitrateBooking(bookingId: string): Promise<ArbitrationRe
     throw updateError;
   }
 
+  let transferId: string | null = null;
+  if (status === "no_show_client" || status === "completed") {
+    transferId = await tryPayoutBooking(booking);
+  }
+
   return {
     bookingId: booking.id,
     status,
     refundId,
+    transferId,
     creatorLatenessMinutes,
     customerLatenessMinutes,
   };
@@ -111,6 +123,36 @@ function minutesLate(slotTime: Date, joinedAt: Date | null): number | null {
 }
 
 /**
+ * Pays the creator their 90% share, but only if they're already Connect-ready
+ * at arbitration time. If not (deferred onboarding — see
+ * src/lib/payouts.ts#releasePendingPayouts), the booking is simply left with
+ * a null stripe_transfer_id: the money stays on the platform balance until
+ * they finish connecting, at which point releasePendingPayouts sweeps it up.
+ */
+async function tryPayoutBooking(booking: {
+  id: string;
+  creator_id: string;
+  amount_cents: number | null;
+}): Promise<string | null> {
+  const { data: creator, error } = await supabase
+    .from("creators")
+    .select("stripe_connect_id")
+    .eq("id", booking.creator_id)
+    .single();
+
+  if (error || !creator?.stripe_connect_id) {
+    return null;
+  }
+
+  const connectStatus = await getConnectStatus(creator.stripe_connect_id);
+  if (!connectStatus.payoutsEnabled) {
+    return null;
+  }
+
+  return payoutBooking(booking, creator.stripe_connect_id);
+}
+
+/**
  * Refunds the payment tied to a booking. `stripe_payment_id` stores the
  * Checkout Session id (cs_...), but stripe.refunds.create needs a
  * PaymentIntent id — so we resolve the session first.
@@ -118,6 +160,11 @@ function minutesLate(slotTime: Date, joinedAt: Date | null): number | null {
  * Returns the refund id, or null if there was nothing to refund (payment
  * never completed) — this is logged rather than thrown, since the booking's
  * status still needs to move to `no_show_creator` either way.
+ *
+ * A plain refund is enough here: checkout charges the platform directly
+ * (see src/app/api/checkout/route.ts) and payouts only ever happen later,
+ * once arbitration decides in the creator's favor — so there's never a
+ * transfer to reverse at refund time.
  */
 async function refundBooking(
   bookingId: string,
@@ -149,12 +196,6 @@ async function refundBooking(
 
   const refund = await stripe.refunds.create({
     payment_intent: paymentIntentId,
-    // The charge is a destination charge — funds already moved to the
-    // creator's connected account, and our commission was collected as an
-    // application fee. Both must be pulled back explicitly, or a "no-show
-    // creator" refund would leave the creator keeping the money anyway.
-    reverse_transfer: true,
-    refund_application_fee: true,
     metadata: { booking_id: bookingId, reason: "creator_no_show" },
   });
 

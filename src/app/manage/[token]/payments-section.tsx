@@ -6,9 +6,11 @@ import type { ConnectStatus } from "@/lib/stripe-connect";
 export function PaymentsSection({
   managementToken,
   status,
+  releasedCount,
 }: {
   managementToken: string;
   status: ConnectStatus;
+  releasedCount: number;
 }) {
   const [isRedirecting, setIsRedirecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -43,15 +45,24 @@ export function PaymentsSection({
       </h2>
 
       {status.payoutsEnabled ? (
-        <p className="inline-flex items-center gap-2 rounded-lg border border-indigo-400/30 bg-indigo-500/10 px-4 py-3 text-sm text-indigo-200">
-          ✓ Paiements activés — tu reçois automatiquement ta part à chaque réservation.
-        </p>
+        <div className="space-y-3">
+          <p className="inline-flex items-center gap-2 rounded-lg border border-indigo-400/30 bg-indigo-500/10 px-4 py-3 text-sm text-indigo-200">
+            ✓ Paiements activés — tu reçois automatiquement ta part à chaque réservation.
+          </p>
+          {releasedCount > 0 && (
+            <p className="rounded-lg border border-indigo-400/30 bg-indigo-500/10 px-4 py-3 text-sm text-indigo-200">
+              {releasedCount} paiement{releasedCount > 1 ? "s" : ""} en attente
+              {releasedCount > 1 ? " viennent" : " vient"} d&rsquo;être débloqué
+              {releasedCount > 1 ? "s" : ""} et arrivent sur ton compte.
+            </p>
+          )}
+        </div>
       ) : (
         <>
           <p className="text-sm text-neutral-400">
             {status.connected
               ? "Ta configuration Stripe n'est pas encore terminée — reprends là où tu t'es arrêté."
-              : "Connecte ton compte Stripe pour recevoir directement l'argent de tes réservations."}
+              : "Tu peux déjà recevoir des réservations sans faire ça maintenant. Connecte ton compte Stripe quand tu veux pour être payé — l'argent de tes réservations t'attend, rien n'est perdu si tu attends."}
           </p>
 
           {error && (

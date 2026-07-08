@@ -60,6 +60,8 @@ create table bookings (
                         'completed'
                       )),
   stripe_payment_id   text,
+  amount_cents        integer, -- charged amount, captured at checkout time (independent of hourly_rate_cents, which can change later)
+  stripe_transfer_id  text, -- null until the creator's 90% share has been transferred (see src/lib/payouts.ts)
   creator_joined_at   timestamptz,
   customer_joined_at  timestamptz,
   created_at          timestamptz not null default now(),
