@@ -8,31 +8,37 @@ create extension if not exists "pgcrypto";
 -- creators
 -- ------------------------------------------------------------
 create table creators (
-  id                uuid primary key default gen_random_uuid(),
-  name              text not null,
-  email             text not null unique,
-  stripe_connect_id text unique,
-  created_at        timestamptz not null default now()
+  id                 uuid primary key default gen_random_uuid(),
+  name               text not null,
+  email              text not null unique,
+  slug               text not null unique,
+  hourly_rate_cents  integer not null default 0,
+  stripe_connect_id  text unique,
+  -- secret link (no creator login system yet) used to access /manage/<token>
+  management_token   text not null unique default encode(gen_random_bytes(24), 'hex'),
+  created_at         timestamptz not null default now()
 );
 
 -- ------------------------------------------------------------
--- availabilities
+-- weekly_availability_rules
 -- ------------------------------------------------------------
-create table availabilities (
-  id         uuid primary key default gen_random_uuid(),
-  creator_id uuid not null references creators(id) on delete cascade,
-  slot_time  timestamptz not null,
-  is_booked  boolean not null default false,
-  created_at timestamptz not null default now(),
+-- One recurring weekly window per day (e.g. "Monday 09:00-18:00"). Bookable
+-- slots are computed live from these rules minus existing bookings — nothing
+-- here is ever touched by the booking flow, so editing your schedule can
+-- never affect an already-booked slot. Supersedes the old `availabilities`
+-- table, which this fresh-install script no longer creates (still present
+-- and unused on databases created before this migration).
+create table weekly_availability_rules (
+  id          uuid primary key default gen_random_uuid(),
+  creator_id  uuid not null references creators(id) on delete cascade,
+  day_of_week smallint not null check (day_of_week between 0 and 6), -- 0 = Sunday .. 6 = Saturday
+  start_time  time not null,
+  end_time    time not null,
+  created_at  timestamptz not null default now(),
 
-  -- un créneau donné ne peut exister qu'une fois par créateur
-  unique (creator_id, slot_time)
+  check (end_time > start_time),
+  unique (creator_id, day_of_week)
 );
-
--- accélère la recherche des créneaux libres d'un créateur
-create index idx_availabilities_free_slots
-  on availabilities (creator_id, slot_time)
-  where is_booked = false;
 
 -- ------------------------------------------------------------
 -- bookings
@@ -44,6 +50,7 @@ create table bookings (
   customer_name     text not null,
   slot_time         timestamptz not null,
   video_room_id     text,
+  video_room_url    text,
   status            text not null default 'pending'
                       check (status in (
                         'pending',

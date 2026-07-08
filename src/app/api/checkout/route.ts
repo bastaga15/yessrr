@@ -1,32 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 import { supabase } from "@/lib/supabase";
-
-const SESSION_PRICE_EUR_CENTS = 5000;
+import { isSlotWithinRules } from "@/lib/availability";
 
 interface CheckoutRequestBody {
   creator_slug: string;
   customer_email: string;
   customer_name: string;
-  slot_time: string;
+  slot_time: string; // ISO timestamp, must match one of the creator's declared availability windows
 }
 
-function slugToName(slug: string) {
-  return decodeURIComponent(slug)
-    .split(/[-_]/)
-    .filter(Boolean)
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(" ");
-}
-
-// MVP shim: slots are bare "HH:MM" strings with no date yet (no real availabilities
-// wired up). Anchor them to today so the timestamptz/unique(creator_id, slot_time)
-// constraints in bookings have a valid value to work with.
-function slotTimeToTimestamp(slotTime: string) {
-  const [hours, minutes] = slotTime.split(":").map(Number);
-  const date = new Date();
-  date.setHours(hours || 0, minutes || 0, 0, 0);
-  return date.toISOString();
+function formatSlotTime(isoSlotTime: string): string {
+  return new Intl.DateTimeFormat("fr-FR", {
+    dateStyle: "long",
+    timeStyle: "short",
+    timeZone: "Europe/Paris",
+  }).format(new Date(isoSlotTime));
 }
 
 export async function POST(request: NextRequest) {
@@ -41,13 +30,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const derivedName = slugToName(creator_slug);
-
     const { data: creator, error: creatorError } = await supabase
       .from("creators")
-      .select("id, name")
-      .ilike("name", derivedName)
-      .limit(1)
+      .select("id, name, hourly_rate_cents")
+      .eq("slug", creator_slug)
       .maybeSingle();
 
     if (creatorError) {
@@ -55,8 +41,15 @@ export async function POST(request: NextRequest) {
     }
     if (!creator) {
       return NextResponse.json(
-        { error: `Créateur introuvable pour "${derivedName}".` },
+        { error: `Créateur introuvable pour "${creator_slug}".` },
         { status: 404 },
+      );
+    }
+
+    if (!(await isSlotWithinRules(creator.id, slot_time))) {
+      return NextResponse.json(
+        { error: "Ce créneau n'est plus disponible." },
+        { status: 400 },
       );
     }
 
@@ -72,7 +65,7 @@ export async function POST(request: NextRequest) {
         creator_id: creator.id,
         customer_email,
         customer_name,
-        slot_time: slotTimeToTimestamp(slot_time),
+        slot_time,
         status: "pending",
       })
       .select("id")
@@ -100,9 +93,9 @@ export async function POST(request: NextRequest) {
             price_data: {
               currency: "eur",
               product_data: {
-                name: `Appel avec ${creator.name} — créneau ${slot_time}`,
+                name: `Appel avec ${creator.name} — ${formatSlotTime(slot_time)}`,
               },
-              unit_amount: SESSION_PRICE_EUR_CENTS,
+              unit_amount: creator.hourly_rate_cents,
             },
             quantity: 1,
           },

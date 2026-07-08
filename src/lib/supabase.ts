@@ -16,4 +16,14 @@ export const supabase = createClient(supabaseUrl, supabaseServiceRoleKey, {
     autoRefreshToken: false,
     persistSession: false,
   },
+  global: {
+    // Next.js patches the global fetch and persists a Data Cache to disk for
+    // any request made during Server Component rendering — including ones
+    // made by this client. `export const dynamic = "force-dynamic"` on a
+    // page is supposed to cover this but has proven unreliable in dev
+    // (stale entries survive even full server restarts). Forcing "no-store"
+    // here, at the source, is the actual fix: booking status/availability
+    // must never be served stale.
+    fetch: (url, options = {}) => fetch(url, { ...options, cache: "no-store" }),
+  },
 });

@@ -1,218 +1,51 @@
-"use client";
+import { notFound } from "next/navigation";
+import { supabase } from "@/lib/supabase";
+import { generateAvailableSlots } from "@/lib/availability";
+import { BookingExperience, type DaySlots } from "./booking-experience";
 
-import { useEffect, useState } from "react";
+// Availability and booked slots change constantly — never let Next.js cache
+// the underlying Supabase fetches for this page.
+export const dynamic = "force-dynamic";
 
-const SLOTS = ["09:00", "10:30", "14:00", "15:30"];
-
-function slugToName(slug: string) {
-  return decodeURIComponent(slug)
-    .split("-")
-    .filter(Boolean)
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(" ");
+function formatDayLabel(dateStr: string): string {
+  const date = new Date(`${dateStr}T00:00:00Z`);
+  const label = new Intl.DateTimeFormat("fr-FR", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    timeZone: "UTC",
+  }).format(date);
+  return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
-function initials(name: string) {
-  return name
-    .split(" ")
-    .map((w) => w.charAt(0))
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
-}
-
-export default function CreatorBookingPage({
+export default async function CreatorBookingPage({
   params,
 }: {
   params: { creator_slug: string };
 }) {
-  const creatorName = slugToName(params.creator_slug);
+  const { data: creator } = await supabase
+    .from("creators")
+    .select("id, name, slug")
+    .eq("slug", params.creator_slug)
+    .maybeSingle();
 
-  const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
-  const [modalVisible, setModalVisible] = useState(false);
-  const [customerName, setCustomerName] = useState("");
-  const [customerEmail, setCustomerEmail] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!selectedSlot) return;
-    const frame = requestAnimationFrame(() => setModalVisible(true));
-    return () => cancelAnimationFrame(frame);
-  }, [selectedSlot]);
-
-  function openSlot(slot: string) {
-    setError(null);
-    setSelectedSlot(slot);
+  if (!creator) {
+    notFound();
   }
 
-  function closeModal() {
-    setModalVisible(false);
-    setTimeout(() => setSelectedSlot(null), 200);
-  }
+  const slots = await generateAvailableSlots(creator.id);
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!selectedSlot || isSubmitting) return;
-
-    setIsSubmitting(true);
-    setError(null);
-
-    try {
-      const response = await fetch("/api/checkout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          creator_slug: params.creator_slug,
-          customer_email: customerEmail,
-          customer_name: customerName,
-          slot_time: selectedSlot,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data?.error ?? "Une erreur est survenue.");
-      }
-
-      window.location.href = data.url;
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Une erreur est survenue.",
-      );
-      setIsSubmitting(false);
+  const days: DaySlots[] = [];
+  for (const slot of slots) {
+    let day = days.find((d) => d.date === slot.date);
+    if (!day) {
+      day = { date: slot.date, label: formatDayLabel(slot.date), slots: [] };
+      days.push(day);
     }
+    day.slots.push({ time: slot.time, iso: slot.iso });
   }
 
   return (
-    <div className="relative min-h-screen overflow-hidden">
-      <div className="pointer-events-none absolute -top-40 left-1/2 h-[32rem] w-[32rem] -translate-x-1/2 rounded-full bg-gradient-to-br from-indigo-600/30 to-violet-600/20 blur-3xl" />
-
-      <header className="relative z-10 flex items-center justify-between border-b border-white/10 px-6 py-5 sm:px-10">
-        <span className="bg-gradient-to-r from-indigo-400 to-violet-400 bg-clip-text text-xl font-bold tracking-tight text-transparent">
-          Yessrr
-        </span>
-
-        <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 py-1.5 pl-1.5 pr-4">
-          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-violet-500 text-[11px] font-semibold">
-            {initials(creatorName)}
-          </span>
-          <span className="text-sm text-neutral-300">{creatorName}</span>
-        </div>
-      </header>
-
-      <main className="relative z-10 mx-auto max-w-2xl px-6 py-16 text-center sm:px-10 sm:py-24">
-        <span className="inline-flex items-center rounded-full border border-indigo-400/30 bg-indigo-500/10 px-3 py-1 text-xs font-medium text-indigo-300">
-          Protocole d&rsquo;arbitrage automatisé
-        </span>
-
-        <h1 className="mt-6 text-3xl font-semibold tracking-tight text-white sm:text-4xl">
-          Réserve un appel avec {creatorName}
-        </h1>
-
-        <p className="mx-auto mt-5 max-w-xl text-balance text-base leading-relaxed text-neutral-400">
-          Réserve et paye ton coaching en 1 clic. Notre protocole garantit la
-          présence : si le créateur a un empêchement, tu es{" "}
-          <span className="text-indigo-300">
-            remboursé à la seconde près
-          </span>
-          . Si tu ne viens pas, il est payé.
-        </p>
-
-        <section className="mt-12">
-          <h2 className="mb-4 text-sm font-medium uppercase tracking-wide text-neutral-500">
-            Créneaux disponibles
-          </h2>
-          <div className="mx-auto grid max-w-md grid-cols-2 gap-3 sm:grid-cols-4">
-            {SLOTS.map((slot) => (
-              <button
-                key={slot}
-                onClick={() => openSlot(slot)}
-                className="rounded-xl border border-white/10 bg-white/5 py-3 text-sm font-medium text-neutral-200 transition hover:border-indigo-400/50 hover:bg-indigo-500/10 hover:text-white"
-              >
-                {slot}
-              </button>
-            ))}
-          </div>
-        </section>
-      </main>
-
-      {selectedSlot && (
-        <div
-          className={`fixed inset-0 z-20 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm transition-opacity duration-200 ${
-            modalVisible ? "opacity-100" : "opacity-0"
-          }`}
-          onClick={closeModal}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className={`w-full max-w-sm rounded-2xl border border-white/10 bg-neutral-900 p-6 shadow-2xl shadow-indigo-950/50 transition-all duration-200 ${
-              modalVisible ? "scale-100 opacity-100" : "scale-95 opacity-0"
-            }`}
-          >
-            <div className="mb-5 flex items-start justify-between">
-              <div>
-                <p className="text-sm text-neutral-500">
-                  Créneau sélectionné
-                </p>
-                <p className="text-lg font-semibold text-white">
-                  {selectedSlot} &middot; {creatorName}
-                </p>
-              </div>
-              <button
-                onClick={closeModal}
-                className="text-neutral-500 transition hover:text-white"
-                aria-label="Fermer"
-              >
-                ✕
-              </button>
-            </div>
-
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <label className="mb-1.5 block text-sm text-neutral-400">
-                  Nom
-                </label>
-                <input
-                  required
-                  value={customerName}
-                  onChange={(e) => setCustomerName(e.target.value)}
-                  placeholder="Jean Dupont"
-                  className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-neutral-600 focus:border-indigo-400/60 focus:outline-none focus:ring-1 focus:ring-indigo-400/60"
-                />
-              </div>
-              <div>
-                <label className="mb-1.5 block text-sm text-neutral-400">
-                  Email
-                </label>
-                <input
-                  required
-                  type="email"
-                  value={customerEmail}
-                  onChange={(e) => setCustomerEmail(e.target.value)}
-                  placeholder="jean@exemple.com"
-                  className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-neutral-600 focus:border-indigo-400/60 focus:outline-none focus:ring-1 focus:ring-indigo-400/60"
-                />
-              </div>
-
-              {error && (
-                <p className="rounded-lg border border-red-400/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">
-                  {error}
-                </p>
-              )}
-
-              <button
-                type="submit"
-                disabled={isSubmitting}
-                className="mt-2 w-full rounded-lg bg-gradient-to-r from-indigo-500 to-violet-500 py-2.5 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {isSubmitting ? "Redirection vers le paiement…" : "Confirmer et Payer"}
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
-    </div>
+    <BookingExperience creatorSlug={creator.slug} creatorName={creator.name} days={days} />
   );
 }
