@@ -7,8 +7,8 @@ Pour l'architecture code, voir `CLAUDE.md`.
 
 Plateforme de booking d'appels vidéo payants pour créateurs de contenu (YouTubers,
 streamers) avec leur communauté. Cible : créateurs 10k-100k abonnés (ni micro, ni
-mega-influenceurs) — segment sous-servi. Commission plateforme : 10% (pas encore
-implémentée techniquement, voir Stripe Connect ci-dessous).
+mega-influenceurs) — segment sous-servi. Commission plateforme : 10%, prélevée via
+Stripe Connect (voir plus bas).
 
 **Killer feature : l'arbitrage automatique.** Si le créateur ne se présente pas
 (ou >10min de retard), le client est remboursé automatiquement. Si le créateur est
@@ -33,6 +33,21 @@ la demande vite avec du vrai monde, pas peaufiner la stack.
 - Arbitrage automatique (manuel via webhook simulé, ET via cron réel) — les 3 règles
   testées : no-show créateur (remboursé), no-show client (créateur payé), match
   parfait (completed). Idempotent.
+- **Cron d'arbitrage réellement déclenché en prod** : workflow GitHub Actions
+  (`.github/workflows/arbitration-cron.yml`) toutes les 5 minutes, testé (manuel +
+  automatique).
+- **Stripe Connect avec onboarding différé** ("collect now, transfer later") :
+  - Le checkout ne bloque jamais, même si le créateur n'a pas connecté Stripe —
+    l'argent reste sur le solde plateforme.
+  - Quand l'arbitrage tranche en faveur du créateur (`completed`/`no_show_client`),
+    on tente un transfert de 90% immédiatement s'il est déjà connecté ; sinon le
+    paiement reste en attente (`bookings.stripe_transfer_id` null).
+  - Dès que le créateur termine sa configuration Stripe et revient sur
+    `/manage/<token>`, tous ses paiements en attente sont automatiquement débloqués
+    et transférés (`src/lib/payouts.ts#releasePendingPayouts`).
+  - Testé de bout en bout avec un vrai compte connecté Stripe : split 90/10 réel,
+    remboursement réel, déblocage différé réel (transfert de 4500/5000 centimes
+    confirmé).
 - RLS activée sur toutes les tables (default-deny, service-role bypass).
 - Déploiement : `yessrr.fr` + `www.yessrr.fr` en prod sur Vercel, connecté à GitHub
   (`github.com/bastaga15/yessrr`, privé) — push sur `main` = déploiement auto.
@@ -52,21 +67,16 @@ la demande vite avec du vrai monde, pas peaufiner la stack.
 - **GitHub** : repo `bastaga15/yessrr` (privé), CLI `gh` installée et authentifiée.
 - **DNS (OVH)** : `yessrr.fr` et `www.yessrr.fr` pointent vers Vercel (`A 76.76.21.21`).
 - **Un seul vrai créateur en base** : "Bastien" (slug `bastien`), utilisé pour les
-  tests manuels. Toutes les données de test créées pendant le développement ont été
-  nettoyées après chaque session de test.
+  tests manuels. Son compte Stripe Connect est réellement configuré et actif
+  (`payouts_enabled: true`). Toutes les données de test créées pendant le
+  développement ont été nettoyées après chaque session de test.
 
 ## Pas encore fait (roadmap dans l'ordre discuté)
 
-1. **Configurer un scheduler externe réel** pour appeler `POST /api/cron/arbitration`
-   toutes les ~5min (header `x-cron-secret`). Décidé : GitHub Actions ou Upstash
-   QStash plutôt que Vercel Cron (limité à 1x/jour sur le plan Hobby). **Pas encore
-   configuré** — le cron existe et fonctionne, mais rien ne l'appelle automatiquement
-   en prod pour l'instant.
-2. **Stripe Connect** — actuellement 100% de l'argent reste sur le compte Stripe de
-   la plateforme, rien ne part vers les créateurs. Décision prise : automatiser
-   (pas de paiement manuel). Pas commencé — c'est un chantier à part entière
-   (compte Express, `account.updated` webhook, destination charges avec
-   `application_fee_amount`, adapter le remboursement pour `refund_application_fee`).
+Les points 1 et 2 sont faits (voir ci-dessus). Prochain dans l'ordre :
+
+1. ~~Configurer un scheduler externe réel~~ ✅ fait (GitHub Actions).
+2. ~~Stripe Connect~~ ✅ fait, avec onboarding différé en plus de ce qui était prévu.
 3. **Séquences email** — aujourd'hui seul l'email de confirmation existe. À ajouter :
    rappel J-1 ET H-1 avant l'appel, notification distincte no-show/remboursement
    (actuellement le no-show ne déclenche aucun email), demande d'avis après l'appel.
@@ -75,6 +85,10 @@ la demande vite avec du vrai monde, pas peaufiner la stack.
 5. **Durcir l'arbitrage contre la fraude** — rien n'empêche aujourd'hui un client
    malhonnête de "rejoindre" l'appel puis couper immédiatement pour faire déclencher
    un no-show créateur. Signalé comme risque produit réel, pas encore traité.
+6. **Relance des créateurs jamais connectés à Stripe** — avec l'onboarding différé,
+   un créateur qui ne connecte jamais son compte laisse de l'argent dormir
+   indéfiniment sur le solde plateforme. Pas de mécanisme de relance/notification
+   pour l'instant (lié au chantier "séquences email" ci-dessus).
 
 ## Décisions notables (pour ne pas les rediscuter)
 
@@ -93,6 +107,10 @@ la demande vite avec du vrai monde, pas peaufiner la stack.
   justifier une dépendance lourde.
 - **`management_token` plutôt qu'un vrai système d'auth** : pas de login créateur
   pour l'instant, choix delibéré pour aller vite en MVP.
+- **Onboarding Stripe Connect différé** ("collect now, transfer later") plutôt que
+  bloquant dès l'inscription : réduit la friction pour un créateur qui teste la
+  plateforme, au prix d'un état intermédiaire ("payé mais pas encore transféré") à
+  gérer. Voir `CLAUDE.md` pour le détail technique.
 
 ## Non traité / connu mais pas prioritaire
 
