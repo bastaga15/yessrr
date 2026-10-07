@@ -86,26 +86,8 @@ la demande vite avec du vrai monde, pas peaufiner la stack.
   précédents.
 - RLS activée sur toutes les tables (default-deny, service-role bypass).
 - Déploiement : `yessrr.fr` + `www.yessrr.fr` en prod sur Vercel, connecté à GitHub
-  (`github.com/bastaga15/yessrr`, privé) — push sur `main` = déploiement auto.
+  (`github.com/bastaga15/yessrr`) — push sur `main` = déploiement auto.
 - Favicon + page d'accueil réels (plus le boilerplate Next.js par défaut).
-
-## Comptes / infra déjà configurés
-
-- **Supabase** : base de données (URL/clés dans `.env.local` et Vercel env vars).
-- **Stripe** : compte en **mode test** (`sk_test_...`). CLI authentifiée localement
-  (`stripe login`, expire dans 90 jours). Webhook prod créé pointant vers
-  `https://yessrr.fr/api/webhooks/stripe` avec son propre secret (différent de celui
-  utilisé par `stripe listen` en local).
-- **Resend** : domaine `yessrr.fr` vérifié, envoi depuis `reservations@yessrr.fr`.
-- **Vercel** : projet `yessrr` sous le compte `bastaga15` (même compte que
-  `lectech.fr`, mais projets/domaines totalement séparés). CLI installée et
-  authentifiée.
-- **GitHub** : repo `bastaga15/yessrr` (privé), CLI `gh` installée et authentifiée.
-- **DNS (OVH)** : `yessrr.fr` et `www.yessrr.fr` pointent vers Vercel (`A 76.76.21.21`).
-- **Un seul vrai créateur en base** : "Bastien" (slug `bastien`), utilisé pour les
-  tests manuels. Son compte Stripe Connect est réellement configuré et actif
-  (`payouts_enabled: true`). Toutes les données de test créées pendant le
-  développement ont été nettoyées après chaque session de test.
 
 ## Pas encore fait (roadmap dans l'ordre discuté)
 
